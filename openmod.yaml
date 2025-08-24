@@ -1,0 +1,7 @@
+name: OpenModParty
+displayName: OpenMod Party Plugin
+author: You
+version: 1.0.0
+id: OpenModParty
+plugin:
+  type: OpenModParty.PartyPlugin
