@@ -27,7 +27,7 @@ namespace OpenModParty
 
     public static class PartyService
     {
-        // invitee Steam64 -> list of pending invites
+        // invitee Steam64 -> list of pending invites (last invite wins)
         private static readonly Dictionary<ulong, List<PartyInvite>> _pending = new();
 
         public static void SendInvite(UnturnedPlayer inviter, UnturnedPlayer invitee, TimeSpan ttl, string inviterName, string inviteeName)
@@ -48,8 +48,8 @@ namespace OpenModParty
             list.RemoveAll(i => i.Expired);
             list.Add(inv);
 
-            inviter.PrintMessageAsync($"You invited {inviteeName}.").Forget();
-            invitee.PrintMessageAsync($"{inviterName} invited you to their party. Use /party accept or /party deny.").Forget();
+            _ = inviter.PrintMessageAsync($"You invited {inviteeName}.");
+            _ = invitee.PrintMessageAsync($"{inviterName} invited you to their party. Use /party accept or /party deny.");
         }
 
         public static bool Accept(UnturnedPlayer invitee, UnturnedPlayer inviter, string inviteeName, string inviterName)
@@ -58,25 +58,26 @@ namespace OpenModParty
             list.RemoveAll(i => i.Expired);
             if (list.Count == 0) return false;
 
-            // keep the most recent invite from this inviter (if supplied)
+            // most recent invite, optionally filtered by inviter
             var chosen = inviter != null
                 ? list.LastOrDefault(i => i.Inviter == inviter.SteamId)
                 : list.Last();
 
             if (chosen.Inviter.m_SteamID == 0) return false;
+            if (inviter == null) return false;
 
-            // ensure inviter has a group; create one if needed
+            // Ensure inviter has a group; create if needed
             var gid = inviter.Player.quests.groupID;
             if (gid == CSteamID.Nil || gid.m_SteamID == 0)
             {
                 if (!TryCreateGroupAndAssignOwner(inviter, out gid)) return false;
             }
 
-            // join invitee to inviter's group; false = respect group member limit
+            // Join invitee to inviter's group (respect member limit = false)
             invitee.Player.quests.ServerAssignToGroup(gid, EPlayerGroupRank.MEMBER, false);
 
-            invitee.PrintMessageAsync($"You joined {inviterName}'s party.").Forget();
-            inviter.PrintMessageAsync($"{inviteeName} joined your party.").Forget();
+            _ = invitee.PrintMessageAsync($"You joined {inviterName}'s party.");
+            _ = inviter.PrintMessageAsync($"{inviteeName} joined your party.");
 
             list.Remove(chosen);
             return true;
@@ -94,9 +95,10 @@ namespace OpenModParty
 
             if (chosen.Inviter.m_SteamID == 0) return false;
 
-            inviter?.PrintMessageAsync($"{inviteeName} denied your party invite.").Forget();
-            invitee.PrintMessageAsync($"Invite denied.").Forget();
+            if (inviter != null)
+                _ = inviter.PrintMessageAsync($"{inviteeName} denied your party invite.");
 
+            _ = invitee.PrintMessageAsync("Invite denied.");
             list.Remove(chosen);
             return true;
         }
@@ -106,13 +108,16 @@ namespace OpenModParty
             var gid = player.Player.quests.groupID;
             if (gid == CSteamID.Nil || gid.m_SteamID == 0) return false;
 
-            // Clear group by assigning NIL (rank is ignored when NIl; pass MEMBER and the required bool)
+            // Clear group by assigning NIL (rank ignored when NIL; still pass MEMBER + bool)
             player.Player.quests.ServerAssignToGroup(CSteamID.Nil, EPlayerGroupRank.MEMBER, false);
-            player.PrintMessageAsync("You left the party.").Forget();
+            _ = player.PrintMessageAsync("You left the party.");
             return true;
         }
 
-        /// Creates a new group and sets owner to OWNER rank (handles both method names across versions).
+        /// <summary>
+        /// Create a new group and set owner as OWNER.
+        /// Works across versions (serverCreateGroup / ServerCreateGroup).
+        /// </summary>
         private static bool TryCreateGroupAndAssignOwner(UnturnedPlayer owner, out CSteamID groupId)
         {
             groupId = CSteamID.Nil;
@@ -132,7 +137,10 @@ namespace OpenModParty
                 groupId = newGroup;
                 return true;
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
         private struct PartyInvite
@@ -157,14 +165,13 @@ namespace OpenModParty
 
         protected override async UniTask OnExecuteAsync()
         {
-            if (Context.Actor is not UnturnedUser uUser)
+            if (Context.Actor is not UnturnedUser meUser)
                 throw new UserFriendlyException("Players only.");
 
-            var meUser = uUser;               // OpenMod user (for names)
-            var me = uUser.Player;            // OpenMod UnturnedPlayer (for SDG.Player access)
+            var me = meUser.Player;
 
             if (Context.Parameters.Length == 0)
-                throw new CommandWrongUsageException(this);
+                throw new CommandWrongUsageException("party");
 
             var sub = Context.Parameters[0].ToLowerInvariant();
 
@@ -176,7 +183,8 @@ namespace OpenModParty
                 {
                     var key = Context.Parameters[1];
                     inviterUser = _users.GetOnlineUsers()
-                        .FirstOrDefault(x => x.Id == key || x.DisplayName.Contains(key, StringComparison.OrdinalIgnoreCase));
+                        .FirstOrDefault(x => x.Id.Equals(key, StringComparison.OrdinalIgnoreCase)
+                                          || x.DisplayName.Contains(key, StringComparison.OrdinalIgnoreCase));
                 }
 
                 var inviterPlayer = inviterUser?.Player;
@@ -192,7 +200,8 @@ namespace OpenModParty
                 {
                     var key = Context.Parameters[1];
                     inviterUser = _users.GetOnlineUsers()
-                        .FirstOrDefault(x => x.Id == key || x.DisplayName.Contains(key, StringComparison.OrdinalIgnoreCase));
+                        .FirstOrDefault(x => x.Id.Equals(key, StringComparison.OrdinalIgnoreCase)
+                                          || x.DisplayName.Contains(key, StringComparison.OrdinalIgnoreCase));
                 }
 
                 var inviterPlayer = inviterUser?.Player;
@@ -208,7 +217,7 @@ namespace OpenModParty
                 return;
             }
 
-            // otherwise treat the whole input as a target player query
+            // otherwise treat the whole input as target player query
             string query = string.Join(" ", Context.Parameters);
 
             var targetUser = _users.GetOnlineUsers()
@@ -219,7 +228,8 @@ namespace OpenModParty
             if (targetUser == null || targetUser.SteamId.m_SteamID == me.SteamId.m_SteamID)
                 throw new UserFriendlyException("Player not found.");
 
-            PartyService.SendInvite(me, targetUser.Player, TimeSpan.FromSeconds(60), meUser.DisplayName, targetUser.DisplayName);
+            PartyService.SendInvite(me, targetUser.Player, TimeSpan.FromSeconds(60),
+                                    meUser.DisplayName, targetUser.DisplayName);
 
             await UniTask.CompletedTask;
         }
