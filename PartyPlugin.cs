@@ -1,4 +1,3 @@
-
 using Cysharp.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using OpenMod.API.Commands;
@@ -11,7 +10,6 @@ using Steamworks;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 
 namespace OpenModParty
 {
@@ -165,11 +163,8 @@ namespace OpenModParty
     {
         public CmdParty(IServiceProvider sp) : base(sp) { }
 
-     protected override async Cysharp.Threading.Tasks.UniTask OnExecuteAsync()
-{
-
-    await Cysharp.Threading.Tasks.UniTask.CompletedTask;
-}
+        protected override async UniTask OnExecuteAsync()
+        {
             if (Context.Actor is not UnturnedUser uUser)
                 throw new UserFriendlyException("Players only.");
 
@@ -200,7 +195,7 @@ namespace OpenModParty
                 return;
             }
 
-            // otherwise treat remaining args as the invite target
+            // otherwise treat as invite target
             string query = string.Join(" ", Context.Parameters);
             var target = Provider.clients.Select(UnturnedPlayer.FromSteamPlayer)
                            .FirstOrDefault(x => x.DisplayName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
@@ -209,6 +204,9 @@ namespace OpenModParty
                 throw new UserFriendlyException("Player not found.");
 
             PartyService.SendInvite(p, target, TimeSpan.FromSeconds(60));
+
+            // make sure UniTask returns
+            await UniTask.CompletedTask;
         }
     }
 }
