@@ -165,8 +165,11 @@ namespace OpenModParty
     {
         public CmdParty(IServiceProvider sp) : base(sp) { }
 
-        protected override async Task OnExecuteAsync()
-        {
+     protected override async Cysharp.Threading.Tasks.UniTask OnExecuteAsync()
+{
+
+    await Cysharp.Threading.Tasks.UniTask.CompletedTask;
+}
             if (Context.Actor is not UnturnedUser uUser)
                 throw new UserFriendlyException("Players only.");
 
