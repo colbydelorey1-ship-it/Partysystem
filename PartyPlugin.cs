@@ -5,6 +5,7 @@ using OpenMod.Core.Commands;
 using OpenMod.Unturned.Commands;
 using OpenMod.Unturned.Players;
 using OpenMod.Unturned.Plugins;
+using OpenMod.Unturned.Users;
 using SDG.Unturned;
 using Steamworks;
 using System;
@@ -26,7 +27,7 @@ namespace OpenModParty
 
     public static class PartyService
     {
-        // invitee -> list of invites (kept simple, last invite wins)
+        // invitee -> list of invites (keep last)
         private static readonly Dictionary<ulong, List<PartyInvite>> _pending = new();
 
         public static void SendInvite(UnturnedPlayer inviter, UnturnedPlayer invitee, TimeSpan ttl)
@@ -47,9 +48,9 @@ namespace OpenModParty
             list.RemoveAll(i => i.Expired);
             list.Add(inv);
 
-            ChatManager.serverSendMessage($"You invited {invitee.DisplayName}.",
+            ChatManager.serverSendMessage($"You invited {invitee.CharacterName}.",
                 UnityEngine.Color.cyan, toPlayer: inviter.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
-            ChatManager.serverSendMessage($"{inviter.DisplayName} invited you to their party. Use /party accept or /party deny.",
+            ChatManager.serverSendMessage($"{inviter.CharacterName} invited you to their party. Use /party accept or /party deny.",
                 UnityEngine.Color.cyan, toPlayer: invitee.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
         }
 
@@ -64,7 +65,7 @@ namespace OpenModParty
             {
                 var match = Provider.clients.Select(UnturnedPlayer.FromSteamPlayer)
                     .FirstOrDefault(p => p.SteamId.m_SteamID.ToString() == inviterNameOrId ||
-                                         p.DisplayName.IndexOf(inviterNameOrId, StringComparison.OrdinalIgnoreCase) >= 0);
+                                         p.CharacterName.IndexOf(inviterNameOrId, StringComparison.OrdinalIgnoreCase) >= 0);
                 if (match == null) return false;
                 chosen = list.LastOrDefault(i => i.Inviter == match.SteamId);
                 if (chosen.Inviter.m_SteamID == 0) return false;
@@ -81,12 +82,12 @@ namespace OpenModParty
                 if (!TryCreateGroupAndAssignOwner(inviter, out gid)) return false;
             }
 
-            // Join invitee to inviter's group
-            invitee.Player.quests.ServerAssignToGroup(gid, EPlayerGroupRank.MEMBER);
+            // Join invitee to inviter's group (false = respect member limit)
+            invitee.Player.quests.ServerAssignToGroup(gid, EPlayerGroupRank.MEMBER, false);
 
-            ChatManager.serverSendMessage($"You joined {inviter.DisplayName}'s party.",
+            ChatManager.serverSendMessage($"You joined {inviter.CharacterName}'s party.",
                 UnityEngine.Color.cyan, toPlayer: invitee.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
-            ChatManager.serverSendMessage($"{invitee.DisplayName} joined your party.",
+            ChatManager.serverSendMessage($"{invitee.CharacterName} joined your party.",
                 UnityEngine.Color.cyan, toPlayer: inviter.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
 
             list.Remove(chosen);
@@ -104,7 +105,7 @@ namespace OpenModParty
             {
                 var match = Provider.clients.Select(UnturnedPlayer.FromSteamPlayer)
                     .FirstOrDefault(p => p.SteamId.m_SteamID.ToString() == inviterNameOrId ||
-                                         p.DisplayName.IndexOf(inviterNameOrId, StringComparison.OrdinalIgnoreCase) >= 0);
+                                         p.CharacterName.IndexOf(inviterNameOrId, StringComparison.OrdinalIgnoreCase) >= 0);
                 if (match == null) return false;
                 chosen = list.LastOrDefault(i => i.Inviter == match.SteamId);
                 if (chosen.Inviter.m_SteamID == 0) return false;
@@ -113,7 +114,7 @@ namespace OpenModParty
 
             var inviter = UnturnedPlayer.FromCSteamID(chosen.Inviter);
             if (inviter != null)
-                ChatManager.serverSendMessage($"{invitee.DisplayName} denied your party invite.",
+                ChatManager.serverSendMessage($"{invitee.CharacterName} denied your party invite.",
                     UnityEngine.Color.cyan, toPlayer: inviter.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
 
             ChatManager.serverSendMessage($"Invite denied.",
@@ -128,7 +129,9 @@ namespace OpenModParty
             var gid = player.Player.quests.groupID;
             if (gid == CSteamID.Nil || gid.m_SteamID == 0) return false;
 
-            player.Player.quests.ServerAssignToGroup(CSteamID.Nil, EPlayerGroupRank.NONE);
+            // Clear group by assigning NIL; rank value ignored when group is NIL but keep MEMBER, add required bool
+            player.Player.quests.ServerAssignToGroup(CSteamID.Nil, EPlayerGroupRank.MEMBER, false);
+
             ChatManager.serverSendMessage($"You left the party.",
                 UnityEngine.Color.cyan, toPlayer: player.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
             return true;
@@ -136,7 +139,7 @@ namespace OpenModParty
 
         /// <summary>
         /// Creates a new group and makes <paramref name="owner"/> the OWNER.
-        /// Uses reflection to support both serverCreateGroup(out CSteamID) and ServerCreateGroup(out CSteamID).
+        /// Works across Unturned versions by trying both serverCreateGroup and ServerCreateGroup.
         /// </summary>
         private static bool TryCreateGroupAndAssignOwner(UnturnedPlayer owner, out CSteamID groupId)
         {
@@ -153,7 +156,7 @@ namespace OpenModParty
 
                 if (!ok || newGroup == CSteamID.Nil || newGroup.m_SteamID == 0) return false;
 
-                owner.Player.quests.ServerAssignToGroup(newGroup, EPlayerGroupRank.OWNER);
+                owner.Player.quests.ServerAssignToGroup(newGroup, EPlayerGroupRank.OWNER, false);
                 groupId = newGroup;
                 return true;
             }
@@ -213,7 +216,7 @@ namespace OpenModParty
             // otherwise treat remaining args as the invite target
             string query = string.Join(" ", Context.Parameters);
             var target = Provider.clients.Select(UnturnedPlayer.FromSteamPlayer)
-                           .FirstOrDefault(x => x.DisplayName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
+                           .FirstOrDefault(x => x.CharacterName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
                                              || x.SteamId.m_SteamID.ToString() == query);
             if (target == null || target.SteamId == p.SteamId)
                 throw new UserFriendlyException("Player not found.");
