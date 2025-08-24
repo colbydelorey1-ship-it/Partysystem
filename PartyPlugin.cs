@@ -24,10 +24,9 @@ namespace OpenModParty
         }
     }
 
-    // ---- Party logic ----
     public static class PartyService
     {
-        // invitee -> list of invites
+        // invitee -> list of invites (kept simple, last invite wins)
         private static readonly Dictionary<ulong, List<PartyInvite>> _pending = new();
 
         public static void SendInvite(UnturnedPlayer inviter, UnturnedPlayer invitee, TimeSpan ttl)
@@ -75,17 +74,21 @@ namespace OpenModParty
             var inviter = UnturnedPlayer.FromCSteamID(chosen.Inviter);
             if (inviter == null) { list.Remove(chosen); return false; }
 
+            // Ensure inviter has a group; create if needed
             var gid = inviter.Player.quests.groupID;
             if (gid == CSteamID.Nil || gid.m_SteamID == 0)
             {
-                if (!TryCreateGroup(inviter, out gid)) return false;
+                if (!TryCreateGroupAndAssignOwner(inviter, out gid)) return false;
             }
 
+            // Join invitee to inviter's group
             invitee.Player.quests.ServerAssignToGroup(gid, EPlayerGroupRank.MEMBER);
+
             ChatManager.serverSendMessage($"You joined {inviter.DisplayName}'s party.",
                 UnityEngine.Color.cyan, toPlayer: invitee.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
             ChatManager.serverSendMessage($"{invitee.DisplayName} joined your party.",
                 UnityEngine.Color.cyan, toPlayer: inviter.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
+
             list.Remove(chosen);
             return true;
         }
@@ -115,6 +118,7 @@ namespace OpenModParty
 
             ChatManager.serverSendMessage($"Invite denied.",
                 UnityEngine.Color.cyan, toPlayer: invitee.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
+
             list.Remove(chosen);
             return true;
         }
@@ -123,29 +127,40 @@ namespace OpenModParty
         {
             var gid = player.Player.quests.groupID;
             if (gid == CSteamID.Nil || gid.m_SteamID == 0) return false;
+
             player.Player.quests.ServerAssignToGroup(CSteamID.Nil, EPlayerGroupRank.NONE);
             ChatManager.serverSendMessage($"You left the party.",
                 UnityEngine.Color.cyan, toPlayer: player.SteamPlayer, iconURL: string.Empty, useRichTextFormatting: false);
             return true;
         }
 
-        private static bool TryCreateGroup(UnturnedPlayer owner, out CSteamID groupId)
+        /// <summary>
+        /// Creates a new group and makes <paramref name="owner"/> the OWNER.
+        /// Uses reflection to support both serverCreateGroup(out CSteamID) and ServerCreateGroup(out CSteamID).
+        /// </summary>
+        private static bool TryCreateGroupAndAssignOwner(UnturnedPlayer owner, out CSteamID groupId)
         {
             groupId = CSteamID.Nil;
             try
             {
-                var gm = typeof(GroupManager);
-                var method = gm.GetMethod("serverCreateGroup") ?? gm.GetMethod("ServerCreateGroup");
-                if (method == null) return false;
+                var gmType = typeof(GroupManager);
+                var mi = gmType.GetMethod("serverCreateGroup") ?? gmType.GetMethod("ServerCreateGroup");
+                if (mi == null) return false;
+
                 object[] args = new object[] { default(CSteamID) };
-                var created = (bool)method.Invoke(null, args);
+                var ok = (bool)mi.Invoke(null, args);
                 var newGroup = (CSteamID)args[0];
-                if (!created || newGroup == CSteamID.Nil || newGroup.m_SteamID == 0) return false;
+
+                if (!ok || newGroup == CSteamID.Nil || newGroup.m_SteamID == 0) return false;
+
                 owner.Player.quests.ServerAssignToGroup(newGroup, EPlayerGroupRank.OWNER);
                 groupId = newGroup;
                 return true;
             }
-            catch { return false; }
+            catch
+            {
+                return false;
+            }
         }
 
         private struct PartyInvite
@@ -195,7 +210,7 @@ namespace OpenModParty
                 return;
             }
 
-            // otherwise treat as invite target
+            // otherwise treat remaining args as the invite target
             string query = string.Join(" ", Context.Parameters);
             var target = Provider.clients.Select(UnturnedPlayer.FromSteamPlayer)
                            .FirstOrDefault(x => x.DisplayName.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0
@@ -205,7 +220,6 @@ namespace OpenModParty
 
             PartyService.SendInvite(p, target, TimeSpan.FromSeconds(60));
 
-            // make sure UniTask returns
             await UniTask.CompletedTask;
         }
     }
